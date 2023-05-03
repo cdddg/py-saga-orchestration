@@ -1,5 +1,5 @@
 from inspect import isawaitable
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 from dataclasses import dataclass
 
 
@@ -13,7 +13,7 @@ class SagaError(Exception):
 class Action:
     action: Callable[..., Any]
     compensation: Callable[..., Any]
-    compensation_args: list[Any] = None
+    compensation_args: Optional[Union[tuple[Any], list[Any]]] = None
     result: Optional[Any] = None
 
     async def act(self, *args):
@@ -25,7 +25,7 @@ class Action:
 
     async def compensate(self):
         result = self.compensation(
-            *(self.compensation_args if self.compensation.__code__.co_varnames else [])
+            *(self.compensation_args if self.compensation.__code__.co_varnames else [])  # pyright:ignore
         )
         if isawaitable(result):
             result = await result
@@ -35,6 +35,17 @@ class Action:
 
 @dataclass
 class Saga:
+    """
+    The Saga class provides a way to manage Saga-style transactions using a sequence of steps,
+    where each step consists of an operation and a compensation function. Transactions will be
+    executed sequentially, and step-by-step compensation is supported.
+
+    Methods:
+        execute(self) -> Any:
+            Execute the saga, sequentially executing each action and storing the result for
+            compensation use in case of failure. If any action fails, compensation functions will
+            be called in reverse order for each executed action.
+    """
     steps: list[Action]
 
     async def execute(self):
@@ -43,7 +54,7 @@ class Saga:
             if isinstance(action, Action):
                 try:
                     actioned_result = await action.act(*args)
-                    if not actioned_result:
+                    if actioned_result is None:
                         args = []
                     elif isinstance(actioned_result, (list, tuple)):
                         args = actioned_result
@@ -92,7 +103,12 @@ class OrchestrationBuilder:
         the current OrchestrationBuilder instance.
 
     - execute() -> Saga:
-        Builds and executes a Saga instance representing the transaction.
+        Builds and executes a Saga instance representing the transaction. When an action function
+        completes successfully, its response will be passed to the next action function as a parameter.
+        If an action function fails, the Saga will compensate for the previously executed actions.
+
+        For example, if action_n fails, the compensations will be executed in the following order:
+        compensation_n-1, compensation_n-2, ..., compensation_1. Finally raises a SagaError.
 
     OrchestrationBuilder instance methods should be chained together to build up the desired
     sequence of actions and compensations.
@@ -108,10 +124,11 @@ class OrchestrationBuilder:
         self.steps: list[Action] = []
 
     def add_step(self, action: Callable[..., Any], compensation: Callable[..., Any]) -> 'OrchestrationBuilder':
-        action = Action(action, compensation)
-        self.steps.append(action)
+        action_ = Action(action, compensation)
+        self.steps.append(action_)
 
         return self
 
     async def execute(self) -> Saga:
         return await Saga(self.steps).execute()
+
