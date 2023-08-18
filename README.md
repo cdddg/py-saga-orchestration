@@ -1,5 +1,7 @@
 # Python Saga Orchestration
 
+The Saga Orchestration pattern provides a mechanism to manage data consistency across microservices without relying on distributed transactions. In this design, each saga orchestrates a series of local transactions. If a local transaction fails, compensating transactions are executed to rollback any preceding transactions, ensuring data integrity. 
+
 OrchestrationBuilder is a class for building Saga-style transactions using a sequence of steps, where each step consists of an operation and a compensation function. Transactions are executed sequentially, and step-by-step compensation is supported.
 
 This code is for reference only and was inspired by my work experience in 2022.
@@ -15,103 +17,95 @@ builder.add_step(action_n, compensation_n)
 saga = await builder.execute()
 ```
 
-## Example
+## Examples
 
-### Simple Example
+1. **Basic Usage**
 
-In this simple example, we use OrchestrationBuilder to execute a Saga-style transaction that consists of two actions, with no compensation functions. The result of each action is not used in subsequent actions.
+   ```python
+   async def action_1():
+       print('action_1()')
+       return "result_1"
+   
+   async def action_2():
+       print('async_action_2()')
+       return "result_2"
+   
+   builder = OrchestrationBuilder()
+   builder.add_step(action_1, lambda: None)
+   builder.add_step(action_2, lambda: None)
+   asyncio.run(builder.execute())
+   
+   # >>> Output:
+   # action_1()
+   # async_action_2()
+   ```
 
-```python
-import asyncio
+2. **Use Arguments or the Return Value of the Previous Action**
 
-async def action_1():
-    print('action_1()')
-    return "result_1"
+   To pass the result of a prior action to a subsequent one, you can use lambda functions. This design allows easy chaining of the results. The result of the previous action is always passed as the first argument to the next action using a lambda function.
 
-async def action_2():
-    print('action_2()')
-    return "result_2"
+   ```python
+   async def action_1():
+       print('async_action_1()')
+       return 'result_1'
+   
+   async def action_2(a, b, *args):
+       print(f'async_action_2(a={a}, b={b}, args={args}')
+       return 'result_2'
+   
+   async def action_3(*args, c, d):
+       print(f'async_action_3(args={args}, c={c}, d={d}')
+       return 'result_3'
+   
+   async def action_4(a, b, *args, c, d, **kwargs):
+       print(f'async_action_4(a={a}, b={b}, args={args}, c={c}, d={d}, kwargs={kwargs}')
+       return 'result_4'
+   
+   builder = (
+       OrchestrationBuilder()
+       .add_step(action_1, lambda: None)
+       .add_step(lambda prev_act_res, a=1, b=2: action_2(a, b, prev_act_res), lambda: None)
+       .add_step(lambda prev_act_res, c=3, d=4: action_3(prev_act_res, c=c, d=d), lambda: None)
+       .add_step(lambda prev_act_res, a=1, b=2, c=3, d=4, e=5, f=6: action_4(a, b, prev_act_res, c=c, d=d, e=e, f=f), lambda: None)
+   )
+   asyncio.run(builder.execute())
+   
+   # >>> Output:
+   # async_action_1()
+   # async_action_2(a=1, b=2, args=('result_1',)
+   # async_action_3(args=('result_2',), c=3, d=4)
+   # async_action_4(a=1, b=2, args=('result_3',), c=3, d=4, kwargs={'e': 5, 'f': 6}
+   ```
 
-builder = OrchestrationBuilder()
-builder.add_step(action_1, lambda: None)
-builder.add_step(action_2, lambda: None)
-asyncio.run(builder.execute())
-```
+3. **Orchestration with Compensation**
 
-Output:
+   This example demonstrates the compensation feature of the Saga Orchestration. Here, `action_2` raises a `RuntimeError` which triggers the Saga to attempt to compensate for the previously executed actions. The result of `action_1` is then passed to its corresponding compensation function `compensation_1`.
 
-```
-action_1()
-action_2()
-```
-
-### Complex Example
-
-This example demonstrates how to use OrchestrationBuilder in a chain style to execute a Saga-style transaction that consists of five actions, including both synchronous and asynchronous functions, each with its own compensation function. The result of each action is passed as an argument to the next action. If an error occurs during execution, a SagaError exception will be raised.
-
-```python
-import asyncio
-
-async def action_1():
-    print('async, action_1()')
-    return 'result_1'
-
-async def compensation_1(result):
-    print(f'async, compensation_1({result})')
-
-async def action_2(result):
-    print(f'async, action_2({result})')
-    return 'result_2'
-
-async def compensation_2(result):
-    print(f'async, compensation_2({result})')
-
-async def action_3(*args):
-    print(f'async, action_3{args}')
-    return 'result_3'
-
-async def compensation_3():
-    print(f'async, compensation_3()')
-
-def action_4(*args):
-    print(f' sync, action_4{args}')
-    return 'result_4'
-
-def compensation_4():
-    print(f' sync, compensation_4()')
-
-async def action_5(result):
-    print(f'async, action_5({result})')
-    raise RuntimeError
-
-builder = (
-    OrchestrationBuilder()
-    .add_step(action_1, lambda curr_act_res: compensation_1(curr_act_res))
-    .add_step(lambda prev_act_res: action_2(prev_act_res), lambda curr_act_res: compensation_2(curr_act_res))
-    .add_step(lambda: action_3(1, 2, 3), compensation_3)
-    .add_step(lambda: action_4(4, 5, 6), compensation_4)
-    .add_step(lambda prev_act_res: action_5(prev_act_res), lambda: None)
-)
-try:
-    asyncio.run(builder.execute())
-except SagaError as e:
-    print(e)
-```
-
-Output:
-
-```
-async, action_1()
-async, action_2(result_1)
-async, action_3(1, 2, 3)
- sync, action_4(4, 5, 6)
-async, action_5(result_4)
- sync, compensation_4()
-async, compensation_3()
-async, compensation_2(result_2)
-async, compensation_1(result_1)
-(RuntimeError(), [])
-```
+   ```python
+   async def action_1():
+       print('async_action_1()')
+       return 'result_1'
+   
+   async def compensation_1(result):
+       print(f'async_compensation_1({result})')
+   
+   async def action_2():
+       print('async_action_2()')
+       raise RuntimeError
+   
+   builder = (
+       OrchestrationBuilder()
+       .add_step(action_1, lambda curr_act_res: compensation_1(curr_act_res))
+       .add_step(action_2, lambda: None)
+   )
+   asyncio.run(builder.execute())
+   
+   # >>> Output:
+   # async_action_1()
+   # async_action_2()
+   # async_compensation_1(result_1)
+   # SagaError: (RuntimeError(), [])
+   ```
 
 ## References
 
