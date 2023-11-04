@@ -91,7 +91,7 @@ saga = await builder.execute()
    
    async def action_2():
        print('async_action_2()')
-       raise RuntimeError
+       raise RuntimeError('test')
    
    builder = (
        OrchestrationBuilder()
@@ -104,7 +104,18 @@ saga = await builder.execute()
    # async_action_1()
    # async_action_2()
    # async_compensation_1(result_1)
-   # SagaError: (RuntimeError(), [])
+   # Traceback (most recent call last):
+   #   File "<string>", in <module>
+   #   File "<string>", in in execute
+   #     raise SagaError(index, exc, action_traceback, compensation_exceptions)
+   # SagaError: A critical error occurred during the saga execution, resulting in transaction failure and compensation attempts.
+   #
+   # Transaction failed at step 1 due to an unexpected RuntimeError, triggering the compensation process.
+   #   ╎Traceback (most recent call last):
+   #   ╎  File "<string>", in <module>
+   #   ╎  File "<string>", in action_2
+   #   ╎    raise RuntimeError('test')
+   #   ╎RuntimeError: test
    ```
 
 ## References
